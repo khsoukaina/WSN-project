@@ -1,0 +1,104 @@
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import networkx as nx
+import random
+
+
+G = nx.balanced_tree(r=2, h=3)  
+num_nodes = G.number_of_nodes()
+
+
+for i in G.nodes:
+    G.nodes[i]['energy'] = 100.0
+    G.nodes[i]['last_value'] = random.uniform(20, 30)  
+    G.nodes[i]['hard_threshold'] = random.uniform(25, 35)  
+    G.nodes[i]['soft_threshold'] = random.uniform(1, 5)  
+
+
+for u, v in G.edges:
+    distance = random.uniform(1, 10)
+    G.edges[u, v]['weight'] = distance
+
+
+fig_graph = plt.figure(figsize=(10, 8))
+ax_graph = fig_graph.add_subplot(111)
+
+fig_table = plt.figure(figsize=(10, 5)) 
+ax_table = fig_table.add_subplot(111)
+
+ax_graph.axis('off')
+ax_table.axis('off')
+
+positions = nx.spring_layout(G)
+
+
+def update_table():
+    ax_table.clear()
+    
+
+    table_data = [
+        [f"Capteur {i}", f"{G.nodes[i]['energy']:.2f}", f"{G.nodes[i]['hard_threshold']:.2f}", f"{G.nodes[i]['soft_threshold']:.2f}"] 
+        for i in G.nodes
+    ]
+    
+    table = ax_table.table(
+        cellText=table_data, colLabels=["Capteur", "Énergie restante", "Seuil Hard", "Seuil Soft"], loc='center', cellLoc='center'
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    table.scale(0.8, 0.8)
+
+
+def consume_energy(path):
+    for i in range(len(path) - 1):
+        u, v = path[i], path[i + 1]
+        energy_cost = G.edges[u, v]['weight']
+        G.nodes[u]['energy'] -= energy_cost / 2
+        G.nodes[v]['energy'] -= energy_cost / 2
+
+
+def check_thresholds_and_send_data(node):
+    
+    if G.nodes[node]['last_value'] >= G.nodes[node]['hard_threshold']:
+        
+        return True
+    elif abs(G.nodes[node]['last_value'] - G.nodes[node].get('last_sent_value', 0)) >= G.nodes[node]['soft_threshold']:
+        
+        return True
+    return False
+
+
+def animate(frame):
+    ax_graph.clear()
+
+    source, target = random.sample(list(G.nodes), 2)
+    path = nx.shortest_path(G, source=source, target=target, weight='weight')
+
+    
+    consume_energy(path)
+
+
+    for node in G.nodes:
+        if check_thresholds_and_send_data(node):
+        
+            G.nodes[node]['last_sent_value'] = G.nodes[node]['last_value'] 
+            G.nodes[node]['last_value'] = random.uniform(20, 30)  
+            G.nodes[node]['energy'] -= 1 
+
+    
+    node_colors = [G.nodes[i]['energy'] for i in G.nodes]
+    nx.draw(
+        G, positions, with_labels=True, node_size=500, node_color=node_colors, cmap=plt.cm.coolwarm, ax=ax_graph
+    )
+
+    nx.draw_networkx_edges(G, positions, ax=ax_graph)
+    path_edges = [(path[i], path[i + 1]) for i in range(len(path) - 1)]
+    nx.draw_networkx_edges(G, positions, edgelist=path_edges, edge_color='red', width=2, ax=ax_graph)
+
+    update_table()
+    fig_table.canvas.draw_idle()
+
+
+ani = animation.FuncAnimation(fig_graph, animate, interval=1000)
+
+plt.show()
