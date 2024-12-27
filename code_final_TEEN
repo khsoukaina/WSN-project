@@ -1,0 +1,153 @@
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import networkx as nx
+import random
+from networkx.algorithms.community import greedy_modularity_communities
+
+# Création d'un graphe arborescent équilibré
+G = nx.balanced_tree(r=2, h=3)
+positions = nx.spring_layout(G)
+num_nodes = G.number_of_nodes()
+
+# Positionner le sink node au centre
+sink_node = 0
+positions[sink_node] = [0.5, 0.5]  # Placer le sink node au centre du graphique
+
+# Initialisation des attributs des nœuds
+for i in G.nodes:
+    G.nodes[i]['energy'] = 100.0
+    G.nodes[i]['last_value'] = random.uniform(20, 30)
+    G.nodes[i]['hard_threshold'] = random.uniform(25, 35)
+    G.nodes[i]['soft_threshold'] = random.uniform(1, 5)
+    G.nodes[i]['last_sent_value'] = None
+    G.nodes[i]['is_cluster_head'] = False  # Ajout d'un attribut pour déterminer si le nœud est un cluster head
+
+# Initialisation des poids des arêtes (distances)
+for u, v in G.edges:
+    G.edges[u, v]['weight'] = random.uniform(1, 10)
+
+# Détection des clusters avec l'algorithme de Louvain
+communities = list(greedy_modularity_communities(G))
+cluster_colors = {node: i for i, community in enumerate(communities) for node in community}
+
+# Liste de couleurs pour les clusters
+color_palette = plt.cm.tab20.colors  # Palette de couleurs
+num_clusters = len(communities)
+colors = [color_palette[i % len(color_palette)] for i in range(num_clusters)]
+
+# Fonction pour déterminer si un nœud est une feuille
+def is_leaf(node):
+    return len(list(G.neighbors(node))) == 1
+
+# Choisir aléatoirement un cluster head dans chaque communauté (à l'exception du sink et des feuilles)
+for community in communities:
+    if len(community) > 1:
+        # Exclure le sink_node et les feuilles
+        possible_cluster_heads = [node for node in community if node != sink_node and not is_leaf(node)]
+        if possible_cluster_heads:
+            cluster_head = random.choice(possible_cluster_heads)
+            G.nodes[cluster_head]['is_cluster_head'] = True
+
+# Création des figures pour l'animation
+fig_graph = plt.figure(figsize=(10, 8))
+ax_graph = fig_graph.add_subplot(111)
+fig_table = plt.figure(figsize=(10, 5))
+ax_table = fig_table.add_subplot(111)
+
+ax_graph.axis('off')
+ax_table.axis('off')
+
+# Fonction pour mettre à jour la table des capteurs
+def update_table():
+    ax_table.clear()
+    table_data = [
+        [
+            f"Capteur {i}",
+            f"{G.nodes[i]['energy']:.2f}",
+            f"{G.nodes[i]['hard_threshold']:.2f}",
+            f"{G.nodes[i]['soft_threshold']:.2f}",
+            "Inactif" if G.nodes[i]['energy'] <= 0 else "Actif",
+            "Cluster Head" if G.nodes[i]['is_cluster_head'] else "",
+        ]
+        for i in G.nodes
+    ]
+    table = ax_table.table(
+        cellText=table_data,
+        colLabels=["Capteur", "Énergie restante", "Seuil Hard", "Seuil Soft", "Statut", "Rôle"],
+        loc='center',
+        cellLoc='center',
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    table.scale(0.8, 0.8)
+
+# Simulation de consommation d'énergie pour un chemin donné
+def consume_energy(path):
+    for i in range(len(path) - 1):
+        u, v = path[i], path[i + 1]
+        energy_cost = G.edges[u, v]['weight']
+        G.nodes[u]['energy'] -= energy_cost / 2
+        G.nodes[v]['energy'] -= energy_cost / 2
+
+# Vérifie si un capteur dépasse les seuils pour envoyer des données
+def check_thresholds_and_send_data(node):
+    if G.nodes[node]['energy'] <= 0:
+        return False  # Capteur inactif
+    if G.nodes[node]['last_value'] >= G.nodes[node]['hard_threshold']:
+        return True
+    if abs(G.nodes[node]['last_value'] - (G.nodes[node]['last_sent_value'] or 0)) >= G.nodes[node]['soft_threshold']:
+        return True
+    return False
+
+# Animation principale
+def animate(frame):
+    ax_graph.clear()
+
+    # Sélection d'un chemin aléatoire
+    active_nodes = [n for n in G.nodes if G.nodes[n]['energy'] > 0]
+    if len(active_nodes) < 2:
+        return  # Arrêter si trop peu de capteurs actifs
+    source, target = random.sample(active_nodes, 2)
+    path = nx.shortest_path(G, source=source, target=target, weight='weight')
+
+    # Consommation d'énergie sur le chemin
+    consume_energy(path)
+
+    # Mise à jour des nœuds
+    for node in G.nodes:
+        if check_thresholds_and_send_data(node):
+            G.nodes[node]['last_sent_value'] = G.nodes[node]['last_value']
+            G.nodes[node]['last_value'] = random.uniform(20, 30)
+            G.nodes[node]['energy'] -= 1  # Consommation d'énergie pour envoyer des données
+
+    # Mise à jour des couleurs et tailles des nœuds
+    node_colors = [
+        'yellow' if i == sink_node else ('blue' if G.nodes[i]['is_cluster_head'] else ('gray' if G.nodes[i]['energy'] <= 0 else colors[cluster_colors[i]]))
+        for i in G.nodes
+    ]
+    
+    node_sizes = [
+        700 if i == sink_node else 300 if G.nodes[i]['energy'] > 0 else 100
+        for i in G.nodes
+    ]
+
+    # Dessiner le graphe
+    nx.draw(
+        G,
+        positions,
+        with_labels=True,
+        node_color=node_colors,
+        node_size=node_sizes,
+        ax=ax_graph,
+    )
+
+    # Chemin mis en surbrillance
+    path_edges = [(path[i], path[i + 1]) for i in range(len(path) - 1)]
+    nx.draw_networkx_edges(G, positions, edgelist=path_edges, edge_color='red', width=2, ax=ax_graph)
+
+    # Mise à jour de la table
+    update_table()
+    fig_table.canvas.draw_idle()
+
+ani = animation.FuncAnimation(fig_graph, animate, interval=1000)
+plt.show()
